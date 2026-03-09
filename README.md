@@ -48,8 +48,9 @@ brew install --cask screenshot-describer
 Start once from Applications, then configure from menubar:
 - choose working folder
 - optionally enable **Launch at login**
+- set/edit **OpenAI API key** via menu item `Edit OpenAI API key…`
 
-Set API key before launch (one of):
+API key can also be configured manually (one of):
 
 ```bash
 export OPENAI_API_KEY="sk-..."

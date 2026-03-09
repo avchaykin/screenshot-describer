@@ -13,6 +13,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var menu = NSMenu()
     private var selectedFolderItem = NSMenuItem(title: "Working folder: not set", action: nil, keyEquivalent: "")
     private var launchAtLoginItem = NSMenuItem(title: "Launch at login", action: nil, keyEquivalent: "")
+    private var apiKeyStatusItem = NSMenuItem(title: "OpenAI API key: not set", action: nil, keyEquivalent: "")
 
     private var state: AppState = .idle {
         didSet { updateStatusIcon() }
@@ -36,6 +37,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         setupMenu()
         restoreFolder()
         updateStatusIcon()
+        refreshAPIKeyStatus()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -73,6 +75,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         launchAtLoginItem.target = self
         menu.addItem(launchAtLoginItem)
         refreshLaunchAtLoginMenuState()
+
+        apiKeyStatusItem.isEnabled = false
+        menu.addItem(apiKeyStatusItem)
+
+        let editAPIKey = NSMenuItem(title: "Edit OpenAI API key…", action: #selector(editOpenAIAPIKey), keyEquivalent: "")
+        editAPIKey.target = self
+        menu.addItem(editAPIKey)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -200,6 +209,65 @@ final class AppController: NSObject, NSApplicationDelegate {
         let plistURL = launchAgentPlistURL()
         _ = try? Process.run(URL(fileURLWithPath: "/bin/launchctl"), arguments: ["unload", plistURL.path])
         try? FileManager.default.removeItem(at: plistURL)
+    }
+
+    @objc private func editOpenAIAPIKey() {
+        let alert = NSAlert()
+        alert.messageText = "OpenAI API key"
+        alert.informativeText = "Key is stored in ~/.config/screenshot-describer/openai_api_key"
+        alert.alertStyle = .informational
+
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.placeholderString = "sk-..."
+        field.stringValue = resolveOpenAIAPIKey()
+        alert.accessoryView = field
+
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Clear")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let newKey = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            do {
+                try writeOpenAIAPIKey(newKey)
+                refreshAPIKeyStatus()
+                notify(title: "OpenAI API key saved", body: "Key updated in local config")
+            } catch {
+                notify(title: "API key save error", body: error.localizedDescription)
+            }
+        } else if response == .alertThirdButtonReturn {
+            do {
+                try clearOpenAIAPIKey()
+                refreshAPIKeyStatus()
+                notify(title: "OpenAI API key removed", body: "Local config key has been cleared")
+            } catch {
+                notify(title: "API key remove error", body: error.localizedDescription)
+            }
+        }
+    }
+
+    private func refreshAPIKeyStatus() {
+        apiKeyStatusItem.title = resolveOpenAIAPIKey().isEmpty ? "OpenAI API key: not set" : "OpenAI API key: configured"
+    }
+
+    private func openAIAPIKeyFileURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/screenshot-describer", isDirectory: true)
+            .appendingPathComponent("openai_api_key")
+    }
+
+    private func writeOpenAIAPIKey(_ key: String) throws {
+        let url = openAIAPIKeyFileURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try key.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func clearOpenAIAPIKey() throws {
+        let url = openAIAPIKeyFileURL()
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
     }
 
     @objc private func quitApp() {
@@ -355,8 +423,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             return env
         }
 
-        let fileURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/screenshot-describer/openai_api_key")
+        let fileURL = openAIAPIKeyFileURL()
 
         if let raw = try? String(contentsOf: fileURL, encoding: .utf8) {
             let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
