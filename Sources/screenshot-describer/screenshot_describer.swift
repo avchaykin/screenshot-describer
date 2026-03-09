@@ -12,6 +12,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var menu = NSMenu()
     private var selectedFolderItem = NSMenuItem(title: "Working folder: not set", action: nil, keyEquivalent: "")
+    private var launchAtLoginItem = NSMenuItem(title: "Launch at login", action: nil, keyEquivalent: "")
 
     private var state: AppState = .idle {
         didSet { updateStatusIcon() }
@@ -24,6 +25,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private let defaults = UserDefaults.standard
     private let folderDefaultsKey = "workingFolderPath"
+
+    private let launchAgentLabel = "com.avchaykin.screenshot-describer"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -61,6 +64,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         let resetFolder = NSMenuItem(title: "Reset folder", action: #selector(resetFolderSelection), keyEquivalent: "")
         resetFolder.target = self
         menu.addItem(resetFolder)
+
+        menu.addItem(NSMenuItem.separator())
+
+        launchAtLoginItem = NSMenuItem(title: "Launch at login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launchAtLoginItem.target = self
+        menu.addItem(launchAtLoginItem)
+        refreshLaunchAtLoginMenuState()
 
         menu.addItem(NSMenuItem.separator())
 
@@ -117,6 +127,77 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = .idle
         selectedFolderItem.title = "Working folder: not set"
         notify(title: "Working folder reset", body: "Set a folder from the menu to resume watching")
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        let shouldEnable = !isLaunchAtLoginEnabled()
+        if shouldEnable {
+            installLaunchAgent()
+            notify(title: "Launch at login enabled", body: "screenshot-describer will start after login")
+        } else {
+            removeLaunchAgent()
+            notify(title: "Launch at login disabled", body: "screenshot-describer will not auto-start")
+        }
+        refreshLaunchAtLoginMenuState()
+    }
+
+    private func refreshLaunchAtLoginMenuState() {
+        launchAtLoginItem.state = isLaunchAtLoginEnabled() ? .on : .off
+    }
+
+    private func isLaunchAtLoginEnabled() -> Bool {
+        FileManager.default.fileExists(atPath: launchAgentPlistURL().path)
+    }
+
+    private func launchAgentPlistURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+            .appendingPathComponent("\(launchAgentLabel).plist")
+    }
+
+    private func installLaunchAgent() {
+        let plistURL = launchAgentPlistURL()
+        let launchAgentsDir = plistURL.deletingLastPathComponent()
+
+        try? FileManager.default.createDirectory(at: launchAgentsDir, withIntermediateDirectories: true)
+
+        let executablePath = CommandLine.arguments.first ?? ""
+        let escapedPath = executablePath.replacingOccurrences(of: "&", with: "&amp;")
+
+        let plist = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key>
+            <string>\(launchAgentLabel)</string>
+            <key>ProgramArguments</key>
+            <array>
+                <string>\(escapedPath)</string>
+            </array>
+            <key>RunAtLoad</key>
+            <true/>
+            <key>KeepAlive</key>
+            <true/>
+            <key>ProcessType</key>
+            <string>Interactive</string>
+        </dict>
+        </plist>
+        """
+
+        do {
+            try plist.write(to: plistURL, atomically: true, encoding: .utf8)
+            _ = try? Process.run(URL(fileURLWithPath: "/bin/launchctl"), arguments: ["unload", plistURL.path])
+            _ = try? Process.run(URL(fileURLWithPath: "/bin/launchctl"), arguments: ["load", plistURL.path])
+        } catch {
+            notify(title: "Launch at login error", body: error.localizedDescription)
+        }
+    }
+
+    private func removeLaunchAgent() {
+        let plistURL = launchAgentPlistURL()
+        _ = try? Process.run(URL(fileURLWithPath: "/bin/launchctl"), arguments: ["unload", plistURL.path])
+        try? FileManager.default.removeItem(at: plistURL)
     }
 
     @objc private func quitApp() {

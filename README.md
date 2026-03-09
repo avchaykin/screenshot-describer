@@ -4,14 +4,15 @@ Menubar macOS service that watches a configured working folder and triggers proc
 
 ## Implemented now
 
-- Installable with Homebrew (formula included)
-- Runs as a background service (`brew services`)
+- Installable with Homebrew as a **cask app**
+- Packaged as a real `.app` bundle (`ScreenshotDescriber.app`)
 - Menubar icon with statuses:
   - `🟢` idle
   - `🟠` processing
 - Menu settings:
   - choose working folder
   - reset working folder
+  - toggle **Launch at login**
   - quit app
 - Watches working folder for new files and starts processing queue
 - Sends macOS notifications when:
@@ -31,19 +32,31 @@ Binary:
 .build/release/screenshot-describer
 ```
 
-## Homebrew install
+## Homebrew install (cask)
 
-This repo includes a formula at `Formula/screenshot-describer.rb`.
+This repo includes a cask at `Casks/screenshot-describer.rb`.
 
 Typical flow (from your tap repo):
 
 ```bash
 brew tap avchaykin/tap
-brew install screenshot-describer
-brew services start screenshot-describer
+brew install --cask screenshot-describer
 ```
 
-Then grant notification permissions to the app when macOS asks.
+Start once from Applications, then configure from menubar:
+- choose working folder
+- optionally enable **Launch at login**
+
+## Build .app bundle and release zip
+
+```bash
+./scripts/build-app.sh
+./scripts/make-release-zip.sh
+```
+
+Artifacts:
+- `dist/ScreenshotDescriber.app`
+- `dist/screenshot-describer-macos.zip` (for GitHub Releases)
 
 ## Notes
 
