@@ -25,8 +25,10 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private let defaults = UserDefaults.standard
     private let folderDefaultsKey = "workingFolderPath"
-
     private let launchAgentLabel = "com.avchaykin.screenshot-describer"
+
+    private let outputCSVFileName = "screenshot-descriptions.csv"
+    private let supportedExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "gif", "heic", "heif"]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -224,18 +226,24 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         knownFiles = currentFiles
 
-        let urls = newPaths.map { URL(fileURLWithPath: $0) }.sorted { $0.path < $1.path }
+        let urls = newPaths
+            .map { URL(fileURLWithPath: $0) }
+            .filter(isSupportedImage)
+            .sorted { $0.path < $1.path }
+
+        guard !urls.isEmpty else { return }
+
         processingQueue.append(contentsOf: urls)
 
         notify(
-            title: "New files detected",
-            body: "Queued \(urls.count) file(s) from \(folderURL.lastPathComponent)"
+            title: "New screenshots detected",
+            body: "Queued \(urls.count) image(s) from \(folderURL.lastPathComponent)"
         )
 
-        processQueueIfNeeded()
+        processQueueIfNeeded(in: folderURL)
     }
 
-    private func processQueueIfNeeded() {
+    private func processQueueIfNeeded(in folderURL: URL) {
         guard !isProcessing, !processingQueue.isEmpty else { return }
         isProcessing = true
         state = .processing
@@ -244,13 +252,21 @@ final class AppController: NSObject, NSApplicationDelegate {
         notify(title: "Processing started", body: file.lastPathComponent)
 
         Task {
-            try? await Task.sleep(for: .seconds(1.5))
-            notify(title: "Processed", body: file.lastPathComponent)
+            do {
+                let description = try await describeImageWithOpenAI(fileURL: file)
+                try appendCSVRow(in: folderURL, fileURL: file, description: description, status: "ok", error: "")
+                notify(title: "Processed", body: file.lastPathComponent)
+            } catch {
+                let message = error.localizedDescription
+                try? appendCSVRow(in: folderURL, fileURL: file, description: "", status: "error", error: message)
+                notify(title: "Processing failed", body: "\(file.lastPathComponent): \(message)")
+            }
+
             isProcessing = false
             if processingQueue.isEmpty {
                 state = .idle
             }
-            processQueueIfNeeded()
+            processQueueIfNeeded(in: folderURL)
         }
     }
 
@@ -271,6 +287,125 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
         }
         return files
+    }
+
+    private func isSupportedImage(_ fileURL: URL) -> Bool {
+        let ext = fileURL.pathExtension.lowercased()
+        return supportedExtensions.contains(ext)
+    }
+
+    private func describeImageWithOpenAI(fileURL: URL) async throws -> String {
+        let apiKey = resolveOpenAIAPIKey()
+        guard !apiKey.isEmpty else {
+            throw NSError(domain: "screenshot-describer", code: 1001, userInfo: [NSLocalizedDescriptionKey: "OpenAI API key is not set (OPENAI_API_KEY or ~/.config/screenshot-describer/openai_api_key)"])
+        }
+
+        let imageData = try Data(contentsOf: fileURL)
+        let mimeType = mimeTypeForExtension(fileURL.pathExtension)
+        let base64 = imageData.base64EncodedString()
+        let dataURL = "data:\(mimeType);base64,\(base64)"
+
+        let requestBody: [String: Any] = [
+            "model": "gpt-4o-mini",
+            "input": [[
+                "role": "user",
+                "content": [
+                    [
+                        "type": "input_text",
+                        "text": "Describe in detail what is shown on this screenshot. Focus on visible UI elements, text, and context."
+                    ],
+                    [
+                        "type": "input_image",
+                        "image_url": dataURL
+                    ]
+                ]
+            ]]
+        ]
+
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "screenshot-describer", code: 1002, userInfo: [NSLocalizedDescriptionKey: "No HTTP response from OpenAI"])
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? "unknown error"
+            throw NSError(domain: "screenshot-describer", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "OpenAI API error \(httpResponse.statusCode): \(body)"])
+        }
+
+        guard
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let outputText = json["output_text"] as? String,
+            !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            throw NSError(domain: "screenshot-describer", code: 1003, userInfo: [NSLocalizedDescriptionKey: "OpenAI response did not include output_text"])
+        }
+
+        return outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func resolveOpenAIAPIKey() -> String {
+        if let env = ProcessInfo.processInfo.environment["OPENAI_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines), !env.isEmpty {
+            return env
+        }
+
+        let fileURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/screenshot-describer/openai_api_key")
+
+        if let raw = try? String(contentsOf: fileURL, encoding: .utf8) {
+            let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty { return key }
+        }
+
+        return ""
+    }
+
+    private func mimeTypeForExtension(_ ext: String) -> String {
+        switch ext.lowercased() {
+        case "jpg", "jpeg": return "image/jpeg"
+        case "png": return "image/png"
+        case "webp": return "image/webp"
+        case "gif": return "image/gif"
+        case "heic": return "image/heic"
+        case "heif": return "image/heif"
+        default: return "application/octet-stream"
+        }
+    }
+
+    private func appendCSVRow(in folderURL: URL, fileURL: URL, description: String, status: String, error: String) throws {
+        let csvURL = folderURL.appendingPathComponent(outputCSVFileName)
+        if !FileManager.default.fileExists(atPath: csvURL.path) {
+            let header = "timestamp_iso,file_name,file_path,status,description,error\n"
+            try header.write(to: csvURL, atomically: true, encoding: .utf8)
+        }
+
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let row = [
+            timestamp,
+            fileURL.lastPathComponent,
+            fileURL.path,
+            status,
+            description,
+            error
+        ].map(csvEscape).joined(separator: ",") + "\n"
+
+        let handle = try FileHandle(forWritingTo: csvURL)
+        try handle.seekToEnd()
+        if let data = row.data(using: .utf8) {
+            try handle.write(contentsOf: data)
+        }
+        try handle.close()
+    }
+
+    private func csvEscape(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
     }
 
     private func notify(title: String, body: String) {

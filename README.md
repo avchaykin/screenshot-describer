@@ -15,10 +15,12 @@ Menubar macOS service that watches a configured working folder and triggers proc
   - toggle **Launch at login**
   - quit app
 - Watches working folder for new files and starts processing queue
+- Sends new images to OpenAI Vision (`gpt-4o-mini`) for screenshot description
+- Appends results to `screenshot-descriptions.csv` in the same watched folder
 - Sends macOS notifications when:
   - new files are detected
   - processing starts
-  - file is processed
+  - file is processed (or failed)
 
 ## Build locally
 
@@ -46,6 +48,18 @@ brew install --cask screenshot-describer
 Start once from Applications, then configure from menubar:
 - choose working folder
 - optionally enable **Launch at login**
+
+Set API key before launch (one of):
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+or save it to:
+
+```bash
+~/.config/screenshot-describer/openai_api_key
+```
 
 ## Build .app bundle and release zip
 
