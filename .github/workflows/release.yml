@@ -1,0 +1,36 @@
+name: Release macOS app
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build app bundle
+        run: ./scripts/build-app.sh
+
+      - name: Create release zip and checksum
+        run: |
+          ./scripts/make-release-zip.sh > dist/sha256.txt
+          echo "SHA256=$(cat dist/sha256.txt)" >> $GITHUB_ENV
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/screenshot-describer-macos.zip
+          generate_release_notes: true
+          body: |
+            Automated release for ${{ github.ref_name }}
+
+            SHA256: `${{ env.SHA256 }}`

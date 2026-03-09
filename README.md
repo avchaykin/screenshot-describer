@@ -58,6 +58,22 @@ Artifacts:
 - `dist/ScreenshotDescriber.app`
 - `dist/screenshot-describer-macos.zip` (for GitHub Releases)
 
+## Automated Releases (GitHub Actions)
+
+Workflow: `.github/workflows/release.yml`
+
+- Triggers on tag push matching `v*` (example: `v0.1.1`)
+- Builds `.app`
+- Creates `screenshot-describer-macos.zip`
+- Publishes/updates GitHub Release with the zip attached
+
+Publish a new release:
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
 ## Notes
 
 Current processing is a placeholder simulation (1.5s per file). Real screenshot description logic can be plugged into `processQueueIfNeeded()` in `screenshot_describer.swift`.
