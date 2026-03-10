@@ -36,12 +36,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         return f
     }()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private var menu = NSMenu()
-    private var selectedFolderItem = NSMenuItem(title: "Working folder: not set", action: nil, keyEquivalent: "")
-    private var launchAtLoginItem = NSMenuItem(title: "Launch at login", action: nil, keyEquivalent: "")
-    private var apiKeyStatusItem = NSMenuItem(title: "OpenAI API key: not set", action: nil, keyEquivalent: "")
-    private var recentHeaderItem = NSMenuItem(title: "Recent files", action: nil, keyEquivalent: "")
-    private var recentItems: [NSMenuItem] = []
+    private let popover = NSPopover()
+    private let titleLabel = NSTextField(labelWithString: "Screenshot Describer")
+    private let statusLabel = NSTextField(labelWithString: "Idle")
+    private let filesLabel = NSTextField(labelWithString: "No recent files")
+    private let selectedFolderItem = NSMenuItem(title: "Working folder: not set", action: nil, keyEquivalent: "")
 
     private var state: AppState = .idle {
         didSet { updateStatusIcon() }
@@ -102,51 +101,40 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func setupMenu() {
         statusItem.button?.toolTip = "screenshot-describer"
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(togglePopover(_:))
 
-        selectedFolderItem.isEnabled = false
-        menu.addItem(selectedFolderItem)
-        menu.addItem(NSMenuItem.separator())
+        titleLabel.font = NSFont.boldSystemFont(ofSize: 14)
+        statusLabel.font = NSFont.systemFont(ofSize: 13)
+        filesLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        filesLabel.lineBreakMode = .byWordWrapping
+        filesLabel.maximumNumberOfLines = 8
 
-        recentHeaderItem.isEnabled = false
-        menu.addItem(recentHeaderItem)
-        for _ in 0..<5 {
-            let item = NSMenuItem(title: "• —", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            recentItems.append(item)
-            menu.addItem(item)
-        }
-        menu.addItem(NSMenuItem.separator())
+        let quitButton = NSButton(title: "Quit", target: self, action: #selector(quitApp))
+        quitButton.bezelStyle = .rounded
 
-        let chooseFolder = NSMenuItem(title: "Choose working folder…", action: #selector(selectFolder), keyEquivalent: "")
-        chooseFolder.target = self
-        menu.addItem(chooseFolder)
+        let stack = NSStackView(views: [titleLabel, statusLabel, filesLabel, quitButton])
+        stack.orientation = .vertical
+        stack.spacing = 10
+        stack.alignment = .leading
+        stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
 
-        let resetFolder = NSMenuItem(title: "Reset folder", action: #selector(resetFolderSelection), keyEquivalent: "")
-        resetFolder.target = self
-        menu.addItem(resetFolder)
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 230))
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor)
+        ])
 
-        menu.addItem(NSMenuItem.separator())
+        let vc = NSViewController()
+        vc.view = contentView
+        popover.contentViewController = vc
+        popover.behavior = .transient
 
-        launchAtLoginItem = NSMenuItem(title: "Launch at login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        launchAtLoginItem.target = self
-        menu.addItem(launchAtLoginItem)
-        refreshLaunchAtLoginMenuState()
-
-        apiKeyStatusItem.isEnabled = false
-        menu.addItem(apiKeyStatusItem)
-
-        let editAPIKey = NSMenuItem(title: "Edit OpenAI API key…", action: #selector(editOpenAIAPIKey), keyEquivalent: "")
-        editAPIKey.target = self
-        menu.addItem(editAPIKey)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let quit = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
-
-        statusItem.menu = menu
-        refreshRecentMenu()
+        refreshPopoverContent()
     }
 
     private func updateStatusIcon() {
@@ -163,28 +151,38 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func togglePopover(_ sender: Any?) {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(sender)
+        } else {
+            refreshPopoverContent()
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
     private func addRecentEvent(fileName: String, status: String) {
+        recentEvents.removeAll { $0.fileName == fileName }
         recentEvents.insert(.init(fileName: fileName, status: status, timestamp: Date()), at: 0)
         if recentEvents.count > 5 {
             recentEvents = Array(recentEvents.prefix(5))
         }
-        refreshRecentMenu()
+        refreshPopoverContent()
     }
 
-    private func refreshRecentMenu() {
+    private func refreshPopoverContent() {
+        switch state {
+        case .idle: statusLabel.stringValue = "Status: idle"
+        case .processing: statusLabel.stringValue = "Status: processing"
+        case .error: statusLabel.stringValue = "Status: error"
+        }
+
         if recentEvents.isEmpty {
-            for item in recentItems {
-                item.title = "• —"
-            }
+            filesLabel.stringValue = "No recent files"
             return
         }
 
-        for (idx, item) in recentItems.enumerated() {
-            guard idx < recentEvents.count else {
-                item.title = "• —"
-                continue
-            }
-            let event = recentEvents[idx]
+        let lines = recentEvents.map { event -> String in
             let symbol: String
             switch event.status {
             case "ok": symbol = "✅"
@@ -193,9 +191,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             case "processing": symbol = "⚙️"
             default: symbol = "•"
             }
-            item.title = "\(symbol) \(event.fileName)"
-            item.toolTip = "\(event.status) at \(isoFormatter.string(from: event.timestamp))"
+            return "\(symbol) \(event.fileName)"
         }
+        filesLabel.stringValue = lines.joined(separator: "\n")
     }
 
     private func restoreFolder() {
@@ -267,7 +265,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func refreshLaunchAtLoginMenuState() {
-        launchAtLoginItem.state = isLaunchAtLoginEnabled() ? .on : .off
+        // No menu toggle in bubble-only UI; kept for compatibility.
     }
 
     private func isLaunchAtLoginEnabled() -> Bool {
@@ -362,7 +360,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func refreshAPIKeyStatus() {
-        apiKeyStatusItem.title = resolveOpenAIAPIKey().isEmpty ? "OpenAI API key: not set" : "OpenAI API key: configured"
+        // Config is file-based; bubble UI is informational only.
     }
 
     private func configDirectoryURL() -> URL {
