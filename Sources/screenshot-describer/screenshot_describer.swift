@@ -587,7 +587,29 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func defaultPrompt() -> String {
-        "Сделай краткое описание того, что изображено на скриншоте. 1-3 предложения, по делу."
+        """
+        Проанализируй скриншот и верни ТОЛЬКО валидный JSON (без markdown и пояснений) по схеме:
+        {
+          "source_context": {"value": "string", "confidence": "high|medium|low"},
+          "gist": "string",
+          "focus": "string",
+          "visible_text": ["string"],
+          "entities": ["string"],
+          "tags": ["string"],
+          "category": "string",
+          "action_items": ["string"],
+          "sensitivity": {"has_sensitive_data": true, "types": ["string"]}
+        }
+
+        Требования:
+        - Цель: чтобы скриншоты было удобно искать в архиве.
+        - Не выдумывай; если не уверен — укажи низкую/среднюю confidence.
+        - visible_text: только реально видимый текст (кнопки, заголовки, ошибки, имена, числа).
+        - tags: 8-15 коротких тегов lowercase.
+        - Сохраняй оригинальные технические термины и названия как на экране.
+        - Если это чат: укажи тему и ключевой вопрос в gist/focus.
+        - Если это ошибка/лог: укажи тип ошибки, код и вероятную причину в gist/focus/action_items.
+        """
     }
 
     private func resolvePrompt() -> String {

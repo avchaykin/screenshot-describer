@@ -73,7 +73,7 @@ Notes:
 - `csv_output_folder` — where `screenshot-descriptions.csv` is written
 - `prompt` — prompt sent with each image to OpenAI
 - if `csv_output_folder` is omitted, CSV is written into `working_folder`
-- if `prompt` is omitted, default concise screenshot-description prompt is used
+- if `prompt` is omitted, a default search/indexing prompt is used (JSON-only structured output)
 - legacy `~/.config/screenshot-describer/openai_api_key` is still supported as fallback
 
 ## Build .app bundle and release zip
