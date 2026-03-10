@@ -23,6 +23,11 @@ struct AppConfig: Codable {
 
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate {
+    private let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var menu = NSMenu()
     private var selectedFolderItem = NSMenuItem(title: "Working folder: not set", action: nil, keyEquivalent: "")
@@ -57,6 +62,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         setupMenu()
         ensureConfigFileExists()
         loadConfig()
+        log("Started. Config: \(configFileURL().path)")
         restoreFolder()
         updateStatusIcon()
         refreshAPIKeyStatus()
@@ -68,16 +74,19 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func setupNotifications() {
         guard notificationsAvailable else {
-            print("Notifications disabled: running outside .app bundle")
+            log("Notifications disabled: running outside .app bundle")
             return
         }
 
         let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-            if let error {
-                print("Notification authorization error: \(error.localizedDescription)")
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+            Task { @MainActor in
+                guard let self else { return }
+                if let error {
+                    self.log("Notification authorization error: \(error.localizedDescription)")
+                }
+                self.log("Notifications granted: \(granted)")
             }
-            print("Notifications granted: \(granted)")
         }
     }
 
@@ -302,6 +311,33 @@ final class AppController: NSObject, NSApplicationDelegate {
             .appendingPathComponent(".config/screenshot-describer", isDirectory: true)
     }
 
+    private func appLogFileURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs", isDirectory: true)
+            .appendingPathComponent("screenshot-describer.log")
+    }
+
+    private func log(_ message: String) {
+        let line = "[\(isoFormatter.string(from: Date()))] \(message)"
+        print(line)
+
+        let url = appLogFileURL()
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: url.path) {
+                try "".write(to: url, atomically: true, encoding: .utf8)
+            }
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.seekToEnd()
+            if let data = (line + "\n").data(using: .utf8) {
+                try handle.write(contentsOf: data)
+            }
+            try handle.close()
+        } catch {
+            print("[logger-error] \(error.localizedDescription)")
+        }
+    }
+
     private func configFileURL() -> URL {
         configDirectoryURL().appendingPathComponent("config.json")
     }
@@ -326,7 +362,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             let data = try JSONEncoder().encode(skeleton)
             try data.write(to: url, options: .atomic)
         } catch {
-            print("Failed to create default config: \(error.localizedDescription)")
+            log("Failed to create default config: \(error.localizedDescription)")
         }
     }
 
@@ -390,8 +426,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         guard !urls.isEmpty else { return }
 
-        print("[watch] detected \(urls.count) new supported file(s) in \(folderURL.path)")
-        urls.forEach { print("[watch] queued: \($0.path)") }
+        log("[watch] detected \(urls.count) new supported file(s) in \(folderURL.path)")
+        urls.forEach { log("[watch] queued: \($0.path)") }
         processingQueue.append(contentsOf: urls)
 
         notify(
@@ -408,18 +444,18 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = .processing
 
         let file = processingQueue.removeFirst()
-        print("[process] start: \(file.path)")
+        log("[process] start: \(file.path)")
         notify(title: "Processing started", body: file.lastPathComponent)
 
         Task {
             do {
                 let description = try await describeImageWithOpenAI(fileURL: file)
                 try appendCSVRow(in: folderURL, fileURL: file, description: description, status: "ok", error: "")
-                print("[process] success: \(file.path)")
+                log("[process] success: \(file.path)")
                 notify(title: "Processed", body: file.lastPathComponent)
             } catch {
                 let message = error.localizedDescription
-                print("[process] error: \(file.path) :: \(message)")
+                log("[process] error: \(file.path) :: \(message)")
                 try? appendCSVRow(in: folderURL, fileURL: file, description: "", status: "error", error: message)
                 notify(title: "Processing failed", body: "\(file.lastPathComponent): \(message)")
             }
@@ -577,7 +613,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         let targetDir = csvOutputFolderURL ?? folderURL
         try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
         let csvURL = targetDir.appendingPathComponent(outputCSVFileName)
-        print("[csv] write row status=\(status) file=\(fileURL.lastPathComponent) -> \(csvURL.path)")
+        log("[csv] write row status=\(status) file=\(fileURL.lastPathComponent) -> \(csvURL.path)")
         if !FileManager.default.fileExists(atPath: csvURL.path) {
             let header = "timestamp_iso,file_name,file_path,status,description,error\n"
             try header.write(to: csvURL, atomically: true, encoding: .utf8)
@@ -608,7 +644,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func notify(title: String, body: String) {
         guard notificationsAvailable else {
-            print("[notify] \(title): \(body)")
+            log("[notify] \(title): \(body)")
             return
         }
 
