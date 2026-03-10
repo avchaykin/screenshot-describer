@@ -137,18 +137,47 @@ final class AppController: NSObject, NSApplicationDelegate {
         refreshPopoverContent()
     }
 
+    private func makeStatusIcon(fillColor: NSColor) -> NSImage {
+        let size = NSSize(width: 14, height: 14)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        let rect = NSRect(origin: .zero, size: size).insetBy(dx: 1, dy: 1)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+
+        fillColor.setFill()
+        path.fill()
+
+        NSColor.black.withAlphaComponent(0.18).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
     private func updateStatusIcon() {
+        guard let button = statusItem.button else { return }
+
+        let color: NSColor
+        let tip: String
         switch state {
         case .idle:
-            statusItem.button?.title = "▭"
-            statusItem.button?.toolTip = "screenshot-describer: idle"
+            color = NSColor(calibratedWhite: 0.95, alpha: 1.0)
+            tip = "screenshot-describer: idle"
         case .processing:
-            statusItem.button?.title = "🟩"
-            statusItem.button?.toolTip = "screenshot-describer: processing"
+            color = NSColor.systemGreen
+            tip = "screenshot-describer: processing"
         case .error:
-            statusItem.button?.title = "🟥"
-            statusItem.button?.toolTip = "screenshot-describer: error"
+            color = NSColor.systemRed
+            tip = "screenshot-describer: error"
         }
+
+        button.title = ""
+        button.image = makeStatusIcon(fillColor: color)
+        button.imagePosition = .imageOnly
+        button.toolTip = tip
     }
 
     @objc private func togglePopover(_ sender: Any?) {
