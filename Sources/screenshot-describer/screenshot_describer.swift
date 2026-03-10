@@ -7,6 +7,18 @@ enum AppState {
     case processing
 }
 
+struct AppConfig: Codable {
+    var openAIAPIKey: String?
+    var workingFolderPath: String?
+    var csvOutputFolderPath: String?
+
+    enum CodingKeys: String, CodingKey {
+        case openAIAPIKey = "openai_api_key"
+        case workingFolderPath = "working_folder"
+        case csvOutputFolderPath = "csv_output_folder"
+    }
+}
+
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -28,6 +40,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let folderDefaultsKey = "workingFolderPath"
     private let launchAgentLabel = "com.avchaykin.screenshot-describer"
 
+    private var config: AppConfig = .init()
+    private var csvOutputFolderURL: URL?
     private let outputCSVFileName = "screenshot-descriptions.csv"
     private let supportedExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "gif", "heic", "heif"]
 
@@ -35,6 +49,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         setupNotifications()
         setupMenu()
+        loadConfig()
         restoreFolder()
         updateStatusIcon()
         refreshAPIKeyStatus()
@@ -104,6 +119,17 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func restoreFolder() {
+        if let outputPath = config.csvOutputFolderPath?.trimmingCharacters(in: .whitespacesAndNewlines), !outputPath.isEmpty {
+            csvOutputFolderURL = URL(fileURLWithPath: outputPath)
+        } else {
+            csvOutputFolderURL = nil
+        }
+
+        if let path = config.workingFolderPath?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+            beginWatching(URL(fileURLWithPath: path))
+            return
+        }
+
         guard let path = defaults.string(forKey: folderDefaultsKey), !path.isEmpty else {
             selectedFolderItem.title = "Working folder: not set"
             return
@@ -123,6 +149,12 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         if panel.runModal() == .OK, let url = panel.url {
             defaults.set(url.path, forKey: folderDefaultsKey)
+            config.workingFolderPath = url.path
+            if config.csvOutputFolderPath == nil || config.csvOutputFolderPath?.isEmpty == true {
+                config.csvOutputFolderPath = url.path
+                csvOutputFolderURL = url
+            }
+            try? saveConfig()
             beginWatching(url)
             notify(title: "Working folder updated", body: url.path)
         }
@@ -130,6 +162,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     @objc private func resetFolderSelection() {
         defaults.removeObject(forKey: folderDefaultsKey)
+        config.workingFolderPath = nil
+        try? saveConfig()
         watcherTimer?.invalidate()
         watcherTimer = nil
         knownFiles = []
@@ -214,7 +248,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc private func editOpenAIAPIKey() {
         let alert = NSAlert()
         alert.messageText = "OpenAI API key"
-        alert.informativeText = "Key is stored in ~/.config/screenshot-describer/openai_api_key"
+        alert.informativeText = "Key is stored in ~/.config/screenshot-describer/config.json (openai_api_key)"
         alert.alertStyle = .informational
 
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
@@ -251,22 +285,45 @@ final class AppController: NSObject, NSApplicationDelegate {
         apiKeyStatusItem.title = resolveOpenAIAPIKey().isEmpty ? "OpenAI API key: not set" : "OpenAI API key: configured"
     }
 
-    private func openAIAPIKeyFileURL() -> URL {
+    private func configDirectoryURL() -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/screenshot-describer", isDirectory: true)
-            .appendingPathComponent("openai_api_key")
+    }
+
+    private func configFileURL() -> URL {
+        configDirectoryURL().appendingPathComponent("config.json")
+    }
+
+    private func openAIAPIKeyFileURL() -> URL {
+        configDirectoryURL().appendingPathComponent("openai_api_key")
+    }
+
+    private func loadConfig() {
+        let url = configFileURL()
+        guard let data = try? Data(contentsOf: url) else { return }
+        if let decoded = try? JSONDecoder().decode(AppConfig.self, from: data) {
+            config = decoded
+        }
+    }
+
+    private func saveConfig() throws {
+        let dir = configDirectoryURL()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(config)
+        try data.write(to: configFileURL(), options: .atomic)
     }
 
     private func writeOpenAIAPIKey(_ key: String) throws {
-        let url = openAIAPIKeyFileURL()
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try key.write(to: url, atomically: true, encoding: .utf8)
+        config.openAIAPIKey = key
+        try saveConfig()
     }
 
     private func clearOpenAIAPIKey() throws {
-        let url = openAIAPIKeyFileURL()
-        if FileManager.default.fileExists(atPath: url.path) {
-            try FileManager.default.removeItem(at: url)
+        config.openAIAPIKey = nil
+        try saveConfig()
+        let legacy = openAIAPIKeyFileURL()
+        if FileManager.default.fileExists(atPath: legacy.path) {
+            try? FileManager.default.removeItem(at: legacy)
         }
     }
 
@@ -423,8 +480,11 @@ final class AppController: NSObject, NSApplicationDelegate {
             return env
         }
 
-        let fileURL = openAIAPIKeyFileURL()
+        if let configured = config.openAIAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines), !configured.isEmpty {
+            return configured
+        }
 
+        let fileURL = openAIAPIKeyFileURL() // legacy fallback
         if let raw = try? String(contentsOf: fileURL, encoding: .utf8) {
             let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if !key.isEmpty { return key }
@@ -446,7 +506,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func appendCSVRow(in folderURL: URL, fileURL: URL, description: String, status: String, error: String) throws {
-        let csvURL = folderURL.appendingPathComponent(outputCSVFileName)
+        let targetDir = csvOutputFolderURL ?? folderURL
+        try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
+        let csvURL = targetDir.appendingPathComponent(outputCSVFileName)
         if !FileManager.default.fileExists(atPath: csvURL.path) {
             let header = "timestamp_iso,file_name,file_path,status,description,error\n"
             try header.write(to: csvURL, atomically: true, encoding: .utf8)

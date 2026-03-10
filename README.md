@@ -50,17 +50,28 @@ Start once from Applications, then configure from menubar:
 - optionally enable **Launch at login**
 - set/edit **OpenAI API key** via menu item `Edit OpenAI API key…`
 
-API key can also be configured manually (one of):
+API key can also be configured manually via env:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 ```
 
-or save it to:
+or with a unified config file:
 
-```bash
-~/.config/screenshot-describer/openai_api_key
+```json
+~/.config/screenshot-describer/config.json
+{
+  "openai_api_key": "sk-...",
+  "working_folder": "/Users/you/Desktop/Screenshots",
+  "csv_output_folder": "/Users/you/Documents/screenshot-describer"
+}
 ```
+
+Notes:
+- `working_folder` — folder to monitor for new images
+- `csv_output_folder` — where `screenshot-descriptions.csv` is written
+- if `csv_output_folder` is omitted, CSV is written into `working_folder`
+- legacy `~/.config/screenshot-describer/openai_api_key` is still supported as fallback
 
 ## Build .app bundle and release zip
 
