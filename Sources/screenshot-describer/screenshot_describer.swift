@@ -49,6 +49,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         setupNotifications()
         setupMenu()
+        ensureConfigFileExists()
         loadConfig()
         restoreFolder()
         updateStatusIcon()
@@ -296,6 +297,25 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func openAIAPIKeyFileURL() -> URL {
         configDirectoryURL().appendingPathComponent("openai_api_key")
+    }
+
+    private func ensureConfigFileExists() {
+        let url = configFileURL()
+        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+
+        let skeleton = AppConfig(
+            openAIAPIKey: "",
+            workingFolderPath: "",
+            csvOutputFolderPath: ""
+        )
+
+        do {
+            try FileManager.default.createDirectory(at: configDirectoryURL(), withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(skeleton)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("Failed to create default config: \(error.localizedDescription)")
+        }
     }
 
     private func loadConfig() {

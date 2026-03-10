@@ -56,7 +56,7 @@ API key can also be configured manually via env:
 export OPENAI_API_KEY="sk-..."
 ```
 
-or with a unified config file:
+or with a unified config file (auto-created on first launch if missing):
 
 ```json
 ~/.config/screenshot-describer/config.json
