@@ -21,8 +21,8 @@ jobs:
 
       - name: Create release zip and checksum
         run: |
-          ./scripts/make-release-zip.sh > dist/sha256.txt
-          echo "SHA256=$(cat dist/sha256.txt)" >> $GITHUB_ENV
+          SHA256=$(./scripts/make-release-zip.sh | tail -n 1)
+          echo "SHA256=$SHA256" >> "$GITHUB_ENV"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
