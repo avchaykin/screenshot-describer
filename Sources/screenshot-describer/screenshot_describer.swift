@@ -5,6 +5,13 @@ import UserNotifications
 enum AppState {
     case idle
     case processing
+    case error
+}
+
+struct RecentFileEvent {
+    let fileName: String
+    let status: String
+    let timestamp: Date
 }
 
 struct AppConfig: Codable {
@@ -33,6 +40,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var selectedFolderItem = NSMenuItem(title: "Working folder: not set", action: nil, keyEquivalent: "")
     private var launchAtLoginItem = NSMenuItem(title: "Launch at login", action: nil, keyEquivalent: "")
     private var apiKeyStatusItem = NSMenuItem(title: "OpenAI API key: not set", action: nil, keyEquivalent: "")
+    private var recentHeaderItem = NSMenuItem(title: "Recent files", action: nil, keyEquivalent: "")
+    private var recentItems: [NSMenuItem] = []
 
     private var state: AppState = .idle {
         didSet { updateStatusIcon() }
@@ -42,6 +51,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var knownFiles: Set<String> = []
     private var processingQueue: [URL] = []
     private var isProcessing = false
+    private var recentEvents: [RecentFileEvent] = []
 
     private let defaults = UserDefaults.standard
     private let folderDefaultsKey = "workingFolderPath"
@@ -97,6 +107,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(selectedFolderItem)
         menu.addItem(NSMenuItem.separator())
 
+        recentHeaderItem.isEnabled = false
+        menu.addItem(recentHeaderItem)
+        for _ in 0..<5 {
+            let item = NSMenuItem(title: "• —", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            recentItems.append(item)
+            menu.addItem(item)
+        }
+        menu.addItem(NSMenuItem.separator())
+
         let chooseFolder = NSMenuItem(title: "Choose working folder…", action: #selector(selectFolder), keyEquivalent: "")
         chooseFolder.target = self
         menu.addItem(chooseFolder)
@@ -126,16 +146,55 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(quit)
 
         statusItem.menu = menu
+        refreshRecentMenu()
     }
 
     private func updateStatusIcon() {
         switch state {
         case .idle:
-            statusItem.button?.title = "🟢"
+            statusItem.button?.title = "▭"
             statusItem.button?.toolTip = "screenshot-describer: idle"
         case .processing:
-            statusItem.button?.title = "🟠"
+            statusItem.button?.title = "🟩"
             statusItem.button?.toolTip = "screenshot-describer: processing"
+        case .error:
+            statusItem.button?.title = "🟥"
+            statusItem.button?.toolTip = "screenshot-describer: error"
+        }
+    }
+
+    private func addRecentEvent(fileName: String, status: String) {
+        recentEvents.insert(.init(fileName: fileName, status: status, timestamp: Date()), at: 0)
+        if recentEvents.count > 5 {
+            recentEvents = Array(recentEvents.prefix(5))
+        }
+        refreshRecentMenu()
+    }
+
+    private func refreshRecentMenu() {
+        if recentEvents.isEmpty {
+            for item in recentItems {
+                item.title = "• —"
+            }
+            return
+        }
+
+        for (idx, item) in recentItems.enumerated() {
+            guard idx < recentEvents.count else {
+                item.title = "• —"
+                continue
+            }
+            let event = recentEvents[idx]
+            let symbol: String
+            switch event.status {
+            case "ok": symbol = "✅"
+            case "error": symbol = "❌"
+            case "queued": symbol = "🕓"
+            case "processing": symbol = "⚙️"
+            default: symbol = "•"
+            }
+            item.title = "\(symbol) \(event.fileName)"
+            item.toolTip = "\(event.status) at \(isoFormatter.string(from: event.timestamp))"
         }
     }
 
@@ -427,7 +486,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard !urls.isEmpty else { return }
 
         log("[watch] detected \(urls.count) new supported file(s) in \(folderURL.path)")
-        urls.forEach { log("[watch] queued: \($0.path)") }
+        urls.forEach {
+            log("[watch] queued: \($0.path)")
+            addRecentEvent(fileName: $0.lastPathComponent, status: "queued")
+        }
         processingQueue.append(contentsOf: urls)
 
         notify(
@@ -444,6 +506,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = .processing
 
         let file = processingQueue.removeFirst()
+        addRecentEvent(fileName: file.lastPathComponent, status: "processing")
         log("[process] start: \(file.path)")
         notify(title: "Processing started", body: file.lastPathComponent)
 
@@ -451,10 +514,13 @@ final class AppController: NSObject, NSApplicationDelegate {
             do {
                 let description = try await describeImageWithOpenAI(fileURL: file)
                 try appendCSVRow(in: folderURL, fileURL: file, description: description, status: "ok", error: "")
+                addRecentEvent(fileName: file.lastPathComponent, status: "ok")
                 log("[process] success: \(file.path)")
                 notify(title: "Processed", body: file.lastPathComponent)
             } catch {
                 let message = error.localizedDescription
+                addRecentEvent(fileName: file.lastPathComponent, status: "error")
+                state = .error
                 log("[process] error: \(file.path) :: \(message)")
                 try? appendCSVRow(in: folderURL, fileURL: file, description: "", status: "error", error: message)
                 notify(title: "Processing failed", body: "\(file.lastPathComponent): \(message)")
@@ -462,7 +528,11 @@ final class AppController: NSObject, NSApplicationDelegate {
 
             isProcessing = false
             if processingQueue.isEmpty {
-                state = .idle
+                if state != .error {
+                    state = .idle
+                }
+            } else {
+                state = .processing
             }
             processQueueIfNeeded(in: folderURL)
         }
