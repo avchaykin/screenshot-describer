@@ -387,6 +387,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         guard !urls.isEmpty else { return }
 
+        print("[watch] detected \(urls.count) new supported file(s) in \(folderURL.path)")
+        urls.forEach { print("[watch] queued: \($0.path)") }
         processingQueue.append(contentsOf: urls)
 
         notify(
@@ -403,15 +405,18 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = .processing
 
         let file = processingQueue.removeFirst()
+        print("[process] start: \(file.path)")
         notify(title: "Processing started", body: file.lastPathComponent)
 
         Task {
             do {
                 let description = try await describeImageWithOpenAI(fileURL: file)
                 try appendCSVRow(in: folderURL, fileURL: file, description: description, status: "ok", error: "")
+                print("[process] success: \(file.path)")
                 notify(title: "Processed", body: file.lastPathComponent)
             } catch {
                 let message = error.localizedDescription
+                print("[process] error: \(file.path) :: \(message)")
                 try? appendCSVRow(in: folderURL, fileURL: file, description: "", status: "error", error: message)
                 notify(title: "Processing failed", body: "\(file.lastPathComponent): \(message)")
             }
@@ -493,15 +498,35 @@ final class AppController: NSObject, NSApplicationDelegate {
             throw NSError(domain: "screenshot-describer", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "OpenAI API error \(httpResponse.statusCode): \(body)"])
         }
 
-        guard
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let outputText = json["output_text"] as? String,
-            !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            throw NSError(domain: "screenshot-describer", code: 1003, userInfo: [NSLocalizedDescriptionKey: "OpenAI response did not include output_text"])
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "screenshot-describer", code: 1003, userInfo: [NSLocalizedDescriptionKey: "OpenAI response is not valid JSON"])
         }
 
-        return outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let outputText = json["output_text"] as? String,
+           !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if let output = json["output"] as? [[String: Any]] {
+            var chunks: [String] = []
+            for item in output {
+                if let content = item["content"] as? [[String: Any]] {
+                    for part in content {
+                        if let text = part["text"] as? String,
+                           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            chunks.append(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                        }
+                    }
+                }
+            }
+            let joined = chunks.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !joined.isEmpty {
+                return joined
+            }
+        }
+
+        let preview = String(data: data, encoding: .utf8)?.prefix(500) ?? "<unreadable body>"
+        throw NSError(domain: "screenshot-describer", code: 1003, userInfo: [NSLocalizedDescriptionKey: "OpenAI response had no text fields (output_text/output[].content[].text). Body preview: \(preview)"])
     }
 
     private func resolveOpenAIAPIKey() -> String {
@@ -538,6 +563,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         let targetDir = csvOutputFolderURL ?? folderURL
         try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
         let csvURL = targetDir.appendingPathComponent(outputCSVFileName)
+        print("[csv] write row status=\(status) file=\(fileURL.lastPathComponent) -> \(csvURL.path)")
         if !FileManager.default.fileExists(atPath: csvURL.path) {
             let header = "timestamp_iso,file_name,file_path,status,description,error\n"
             try header.write(to: csvURL, atomically: true, encoding: .utf8)
