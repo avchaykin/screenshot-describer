@@ -38,6 +38,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private let titleLabel = NSTextField(labelWithString: "Screenshot Describer")
+    private let subtitleLabel = NSTextField(labelWithString: "Recent activity")
     private let statusLabel = NSTextField(labelWithString: "Idle")
     private let filesLabel = NSTextField(labelWithString: "No recent files")
     private let selectedFolderItem = NSMenuItem(title: "Working folder: not set", action: nil, keyEquivalent: "")
@@ -104,22 +105,36 @@ final class AppController: NSObject, NSApplicationDelegate {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover(_:))
 
-        titleLabel.font = NSFont.boldSystemFont(ofSize: 14)
-        statusLabel.font = NSFont.systemFont(ofSize: 13)
-        filesLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        filesLabel.lineBreakMode = .byWordWrapping
-        filesLabel.maximumNumberOfLines = 8
+        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.textColor = .labelColor
+
+        subtitleLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        subtitleLabel.textColor = .secondaryLabelColor
+
+        statusLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        statusLabel.textColor = .labelColor
+
+        filesLabel.font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        filesLabel.textColor = .labelColor
+        filesLabel.lineBreakMode = .byTruncatingTail
+        filesLabel.maximumNumberOfLines = 6
+
+        let sep1 = NSBox()
+        sep1.boxType = .separator
+        let sep2 = NSBox()
+        sep2.boxType = .separator
 
         let quitButton = NSButton(title: "Quit", target: self, action: #selector(quitApp))
         quitButton.bezelStyle = .rounded
+        quitButton.controlSize = .small
 
-        let stack = NSStackView(views: [titleLabel, statusLabel, filesLabel, quitButton])
+        let stack = NSStackView(views: [titleLabel, subtitleLabel, sep1, statusLabel, sep2, filesLabel, quitButton])
         stack.orientation = .vertical
-        stack.spacing = 10
+        stack.spacing = 8
         stack.alignment = .leading
-        stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
 
-        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 230))
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 215))
         stack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -201,13 +216,13 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func refreshPopoverContent() {
         switch state {
-        case .idle: statusLabel.stringValue = "Status: idle"
-        case .processing: statusLabel.stringValue = "Status: processing"
-        case .error: statusLabel.stringValue = "Status: error"
+        case .idle: statusLabel.stringValue = "Status: ⚪︎ idle"
+        case .processing: statusLabel.stringValue = "Status: 🟢 processing"
+        case .error: statusLabel.stringValue = "Status: 🔴 error"
         }
 
         if recentEvents.isEmpty {
-            filesLabel.stringValue = "No recent files"
+            filesLabel.stringValue = "• No recent files"
             return
         }
 
