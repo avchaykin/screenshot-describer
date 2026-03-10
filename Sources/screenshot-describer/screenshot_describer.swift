@@ -43,6 +43,10 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var config: AppConfig = .init()
     private var csvOutputFolderURL: URL?
     private let outputCSVFileName = "screenshot-descriptions.csv"
+    private lazy var notificationsAvailable: Bool = {
+        // UserNotifications API can crash when process is launched from a plain binary path (no .app bundle).
+        Bundle.main.bundleURL.pathExtension.lowercased() == "app"
+    }()
     private let supportedExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "gif", "heic", "heif"]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -61,6 +65,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func setupNotifications() {
+        guard notificationsAvailable else {
+            print("Notifications disabled: running outside .app bundle")
+            return
+        }
+
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, error in
             if let error {
@@ -558,6 +567,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func notify(title: String, body: String) {
+        guard notificationsAvailable else {
+            print("[notify] \(title): \(body)")
+            return
+        }
+
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
