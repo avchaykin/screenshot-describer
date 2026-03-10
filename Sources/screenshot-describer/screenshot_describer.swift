@@ -11,11 +11,13 @@ struct AppConfig: Codable {
     var openAIAPIKey: String?
     var workingFolderPath: String?
     var csvOutputFolderPath: String?
+    var prompt: String?
 
     enum CodingKeys: String, CodingKey {
         case openAIAPIKey = "openai_api_key"
         case workingFolderPath = "working_folder"
         case csvOutputFolderPath = "csv_output_folder"
+        case prompt
     }
 }
 
@@ -315,7 +317,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         let skeleton = AppConfig(
             openAIAPIKey: "",
             workingFolderPath: "",
-            csvOutputFolderPath: ""
+            csvOutputFolderPath: "",
+            prompt: defaultPrompt()
         )
 
         do {
@@ -471,7 +474,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 "content": [
                     [
                         "type": "input_text",
-                        "text": "Describe in detail what is shown on this screenshot. Focus on visible UI elements, text, and context."
+                        "text": resolvePrompt()
                     ],
                     [
                         "type": "input_image",
@@ -545,6 +548,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
 
         return ""
+    }
+
+    private func defaultPrompt() -> String {
+        "Сделай краткое описание того, что изображено на скриншоте. 1-3 предложения, по делу."
+    }
+
+    private func resolvePrompt() -> String {
+        if let configured = config.prompt?.trimmingCharacters(in: .whitespacesAndNewlines), !configured.isEmpty {
+            return configured
+        }
+        return defaultPrompt()
     }
 
     private func mimeTypeForExtension(_ ext: String) -> String {

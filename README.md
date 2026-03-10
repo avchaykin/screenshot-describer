@@ -63,14 +63,17 @@ or with a unified config file (auto-created on first launch if missing):
 {
   "openai_api_key": "sk-...",
   "working_folder": "/Users/you/Desktop/Screenshots",
-  "csv_output_folder": "/Users/you/Documents/screenshot-describer"
+  "csv_output_folder": "/Users/you/Documents/screenshot-describer",
+  "prompt": "Сделай краткое описание того, что изображено на скриншоте. 1-3 предложения, по делу."
 }
 ```
 
 Notes:
 - `working_folder` — folder to monitor for new images
 - `csv_output_folder` — where `screenshot-descriptions.csv` is written
+- `prompt` — prompt sent with each image to OpenAI
 - if `csv_output_folder` is omitted, CSV is written into `working_folder`
+- if `prompt` is omitted, default concise screenshot-description prompt is used
 - legacy `~/.config/screenshot-describer/openai_api_key` is still supported as fallback
 
 ## Build .app bundle and release zip
