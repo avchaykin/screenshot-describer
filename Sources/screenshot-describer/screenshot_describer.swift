@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import UserNotifications
 
@@ -579,6 +580,14 @@ final class AppController: NSObject, NSApplicationDelegate {
             do {
                 let description = try await describeImageWithOpenAI(fileURL: file)
                 try appendCSVRow(in: folderURL, fileURL: file, description: description, status: "ok", error: "")
+
+                do {
+                    try writeSpotlightDescription(for: file, description: description)
+                } catch {
+                    log("[spotlight] warning: failed to update metadata for \(file.lastPathComponent): \(error.localizedDescription)")
+                    notify(title: "Metadata warning", body: "CSV saved, but Spotlight metadata failed for \(file.lastPathComponent)")
+                }
+
                 addRecentEvent(fileName: file.lastPathComponent, status: "ok")
                 log("[process] success: \(file.path)")
                 notify(title: "Processed", body: file.lastPathComponent)
@@ -797,6 +806,56 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func csvEscape(_ value: String) -> String {
         let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
         return "\"\(escaped)\""
+    }
+
+    private func writeSpotlightDescription(for fileURL: URL, description: String) throws {
+        let normalized = description
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !normalized.isEmpty else {
+            return
+        }
+
+        // Finder/Spotlight comments work best as a binary plist string in this xattr.
+        // Spotlight can index this field, making description text searchable via Finder/Spotlight.
+        let maxChars = 4000
+        let payload = String(normalized.prefix(maxChars))
+        let plistData = try PropertyListSerialization.data(
+            fromPropertyList: payload,
+            format: .binary,
+            options: 0
+        )
+
+        try setExtendedAttribute(
+            key: "com.apple.metadata:kMDItemFinderComment",
+            data: plistData,
+            fileURL: fileURL
+        )
+
+        log("[spotlight] metadata updated: \(fileURL.lastPathComponent)")
+    }
+
+    private func setExtendedAttribute(key: String, data: Data, fileURL: URL) throws {
+        let result = fileURL.path.withCString { pathPtr in
+            key.withCString { keyPtr in
+                data.withUnsafeBytes { bytes in
+                    setxattr(pathPtr, keyPtr, bytes.baseAddress, data.count, 0, 0)
+                }
+            }
+        }
+
+        guard result == 0 else {
+            let code = errno
+            throw NSError(
+                domain: NSPOSIXErrorDomain,
+                code: Int(code),
+                userInfo: [
+                    NSLocalizedDescriptionKey: "setxattr failed for \(key) on \(fileURL.lastPathComponent): \(String(cString: strerror(code)))"
+                ]
+            )
+        }
     }
 
     private func notify(title: String, body: String) {
