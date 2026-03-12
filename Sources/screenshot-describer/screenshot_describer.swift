@@ -37,6 +37,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     }()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
+    private let eventTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
     private let titleLabel = NSTextField(labelWithString: "Screenshot Describer")
     private let statusDotLabel = NSTextField(labelWithString: "●")
     private let statusTextLabel = NSTextField(labelWithString: "Idle")
@@ -228,6 +233,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         refreshPopoverContent()
     }
 
+    private func padded(_ text: String, to width: Int) -> String {
+        if text.count >= width { return text }
+        return text + String(repeating: " ", count: width - text.count)
+    }
+
+    private func leftPadded(_ text: String, to width: Int) -> String {
+        if text.count >= width { return text }
+        return String(repeating: " ", count: width - text.count) + text
+    }
+
     private func refreshPopoverContent() {
         switch state {
         case .idle:
@@ -246,7 +261,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             return
         }
 
-        let maxName = 28
+        let maxName = 22
+        let statusWidth = 10
         let lines = recentEvents.prefix(10).map { event -> String in
             let statusText: String
             switch event.status {
@@ -256,9 +272,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             case "processing": statusText = "processing"
             default: statusText = event.status
             }
+
+            let ts = eventTimeFormatter.string(from: event.timestamp)
             let name = event.fileName.count > maxName ? String(event.fileName.prefix(maxName - 1)) + "…" : event.fileName
-            let padding = max(1, maxName - name.count)
-            return name + String(repeating: " ", count: padding) + "  " + statusText
+            let leftCol = padded("\(ts)  \(name)", to: 34)
+            let rightCol = leftPadded(statusText, to: statusWidth)
+            return leftCol + rightCol
         }
         filesLabel.stringValue = lines.joined(separator: "\n")
     }
