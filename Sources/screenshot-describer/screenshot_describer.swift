@@ -340,6 +340,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         statusLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         statusLabel.textColor = statusColor(event.status)
         statusLabel.alignment = .right
+        statusLabel.maximumNumberOfLines = 1
+        statusLabel.lineBreakMode = .byClipping
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -347,6 +349,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         summaryButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
         summaryButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         statusLabel.setContentHuggingPriority(.required, for: .horizontal)
+        statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 74).isActive = true
 
         row.addArrangedSubview(summaryButton)
         row.addArrangedSubview(spacer)
