@@ -121,7 +121,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         filesStack.orientation = .vertical
         filesStack.spacing = 6
-        filesStack.alignment = .leading
+        filesStack.alignment = .width
 
         let sep1 = NSBox()
         sep1.boxType = .separator
@@ -357,12 +357,17 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func makeShortSummary(from description: String) -> String {
         let source = extractSummarySource(from: description)
-        let cleaned = source
+        let cleaned = cleanupSummaryPrefix(source)
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let words = cleaned
-            .split(whereSeparator: { $0.isWhitespace || $0 == "," || $0 == "." || $0 == ":" || $0 == ";" || $0 == "|" || $0 == "-" })
+        let sentence = cleaned
+            .split(separator: ".", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+            .map(String.init) ?? cleaned
+
+        let words = sentence
+            .split(whereSeparator: { $0.isWhitespace || $0 == "," || $0 == ":" || $0 == ";" || $0 == "|" })
             .map(String.init)
             .filter { !$0.isEmpty }
 
@@ -378,10 +383,47 @@ final class AppController: NSObject, NSApplicationDelegate {
         return "new screenshot"
     }
 
+    private func cleanupSummaryPrefix(_ text: String) -> String {
+        var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let boilerplatePrefixes = [
+            "Скриншот представляет собой",
+            "Скриншот показывает",
+            "На скриншоте показан",
+            "На скриншоте показана",
+            "На скриншоте показано",
+            "На скриншоте",
+            "Изображение показывает",
+            "На изображении",
+            "This screenshot shows",
+            "The screenshot shows",
+            "The screenshot contains"
+        ]
+
+        for prefix in boilerplatePrefixes {
+            if value.lowercased().hasPrefix(prefix.lowercased()) {
+                value = String(value.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+        }
+
+        return value.trimmingCharacters(in: CharacterSet(charactersIn: "-:,. "))
+    }
+
     private func extractSummarySource(from description: String) -> String {
         guard let data = description.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return description
+        }
+
+        if let entities = json["entities"] as? [String] {
+            let nonEmpty = entities.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            if nonEmpty.count >= 2 {
+                return nonEmpty.prefix(2).joined(separator: " ")
+            }
+            if let first = nonEmpty.first {
+                return first
+            }
         }
 
         if let focus = json["focus"] as? String, !focus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
