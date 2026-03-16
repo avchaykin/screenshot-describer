@@ -48,6 +48,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let statusDotLabel = NSTextField(labelWithString: "●")
     private let statusTextLabel = NSTextField(labelWithString: "Idle")
     private let filesStack = NSStackView()
+    private let rowsScroll = NSScrollView()
+    private var rowsHeightConstraint: NSLayoutConstraint?
+    private var popoverContentView: NSView?
     private let selectedFolderItem = NSMenuItem(title: "Working folder: not set", action: nil, keyEquivalent: "")
 
     private var state: AppState = .idle {
@@ -157,13 +160,13 @@ final class AppController: NSObject, NSApplicationDelegate {
             filesStack.bottomAnchor.constraint(equalTo: rowsContainer.bottomAnchor)
         ])
 
-        let rowsScroll = NSScrollView()
         rowsScroll.drawsBackground = false
         rowsScroll.hasVerticalScroller = true
         rowsScroll.autohidesScrollers = true
         rowsScroll.documentView = rowsContainer
         rowsScroll.contentView.postsBoundsChangedNotifications = false
-        rowsScroll.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        rowsHeightConstraint = rowsScroll.heightAnchor.constraint(equalToConstant: 80)
+        rowsHeightConstraint?.isActive = true
 
         let stack = NSStackView(views: [headerStack, sep1, rowsScroll, sep2, footerStack])
         stack.orientation = .vertical
@@ -171,7 +174,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         stack.alignment = .leading
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
 
-        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 290))
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 220))
         contentView.wantsLayer = true
         contentView.layer?.backgroundColor = NSColor(calibratedWhite: 0.97, alpha: 1.0).cgColor
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -180,8 +183,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             stack.topAnchor.constraint(equalTo: contentView.topAnchor),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor)
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
         ])
+        popoverContentView = contentView
 
         let vc = NSViewController()
         vc.view = contentView
@@ -288,12 +292,28 @@ final class AppController: NSObject, NSApplicationDelegate {
             emptyLabel.font = NSFont.systemFont(ofSize: 12)
             emptyLabel.textColor = .secondaryLabelColor
             filesStack.addArrangedSubview(emptyLabel)
+            rowsHeightConstraint?.constant = 34
+            updatePopoverSize()
             return
         }
 
-        recentEvents.prefix(10).forEach { event in
+        let visibleEvents = Array(recentEvents.prefix(10))
+        visibleEvents.forEach { event in
             filesStack.addArrangedSubview(makeEventRow(for: event))
         }
+
+        let targetHeight = min(220, max(40, CGFloat(visibleEvents.count) * 38.0))
+        rowsHeightConstraint?.constant = targetHeight
+        updatePopoverSize()
+    }
+
+    private func updatePopoverSize() {
+        guard let contentView = popoverContentView else { return }
+        contentView.layoutSubtreeIfNeeded()
+        var fitting = contentView.fittingSize
+        fitting.width = 380
+        fitting.height = min(420, max(130, fitting.height))
+        popover.contentSize = fitting
     }
 
     private func makeEventRow(for event: RecentFileEvent) -> NSView {
