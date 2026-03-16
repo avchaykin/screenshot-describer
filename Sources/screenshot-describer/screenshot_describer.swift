@@ -376,6 +376,10 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func makeShortSummary(from description: String) -> String {
+        if let compact = makeWhatSummaryFromJSON(description), !compact.isEmpty {
+            return compact
+        }
+
         let source = extractSummarySource(from: description)
         let cleaned = cleanupSummaryPrefix(source)
             .replacingOccurrences(of: "\n", with: " ")
@@ -391,16 +395,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             .map(String.init)
             .filter { !$0.isEmpty }
 
-        if words.count >= 3 {
-            return words.prefix(3).joined(separator: " ")
+        if words.count >= 4 {
+            return words.prefix(4).joined(separator: " ")
         }
-        if words.count == 2 {
-            return words.joined(separator: " ")
+        if words.count >= 2 {
+            return words.prefix(3).joined(separator: " ")
         }
         if words.count == 1 {
             return words[0]
         }
-        return "new screenshot"
+        return "Скриншот"
     }
 
     private func cleanupSummaryPrefix(_ text: String) -> String {
@@ -428,6 +432,59 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
 
         return value.trimmingCharacters(in: CharacterSet(charactersIn: "-:,. "))
+    }
+
+    private func makeWhatSummaryFromJSON(_ description: String) -> String? {
+        guard let data = description.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        let category = (json["category"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let entities = (json["entities"] as? [String] ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if let first = entities.first {
+            let lower = first.lowercased()
+            if lower.contains("счет") || lower.contains("invoice") || lower.contains("bill") {
+                return "Счет \(first.replacingOccurrences(of: "Счет", with: "").trimmingCharacters(in: .whitespacesAndNewlines))".trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        if category.lowercased().contains("diagram") || category.lowercased().contains("архит") {
+            return "Схема архитектуры системы"
+        }
+
+        if category.lowercased().contains("dashboard") || category.lowercased().contains("visual") {
+            return "Интерфейс визуализации данных"
+        }
+
+        if !category.isEmpty, let first = entities.first {
+            let combined = "\(category) \(first)"
+            return cleanupSummaryPrefix(combined)
+                .split(separator: ".", maxSplits: 1, omittingEmptySubsequences: true)
+                .first
+                .map(String.init)
+                .map { $0.split(separator: " ").prefix(4).joined(separator: " ") }
+        }
+
+        if let first = entities.first {
+            return cleanupSummaryPrefix(first)
+                .split(separator: ".", maxSplits: 1, omittingEmptySubsequences: true)
+                .first
+                .map(String.init)
+        }
+
+        if let focus = json["focus"] as? String {
+            let cleaned = cleanupSummaryPrefix(focus)
+            let words = cleaned.split(whereSeparator: { $0.isWhitespace || $0 == "," || $0 == ":" || $0 == ";" })
+            if words.count >= 2 {
+                return words.prefix(4).joined(separator: " ")
+            }
+        }
+
+        return nil
     }
 
     private func extractSummarySource(from description: String) -> String {
