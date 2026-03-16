@@ -9,7 +9,9 @@ enum AppState {
 }
 
 struct RecentFileEvent {
+    let fileURL: URL
     let fileName: String
+    let summary: String
     let status: String
     let timestamp: Date
 }
@@ -45,7 +47,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let titleLabel = NSTextField(labelWithString: "Screenshot Describer")
     private let statusDotLabel = NSTextField(labelWithString: "●")
     private let statusTextLabel = NSTextField(labelWithString: "Idle")
-    private let filesLabel = NSTextField(labelWithString: "No recent files")
+    private let filesStack = NSStackView()
     private let selectedFolderItem = NSMenuItem(title: "Working folder: not set", action: nil, keyEquivalent: "")
 
     private var state: AppState = .idle {
@@ -117,10 +119,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         statusTextLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         statusTextLabel.textColor = .secondaryLabelColor
 
-        filesLabel.font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
-        filesLabel.textColor = .labelColor
-        filesLabel.lineBreakMode = .byTruncatingTail
-        filesLabel.maximumNumberOfLines = 10
+        filesStack.orientation = .vertical
+        filesStack.spacing = 6
+        filesStack.alignment = .leading
 
         let sep1 = NSBox()
         sep1.boxType = .separator
@@ -145,13 +146,32 @@ final class AppController: NSObject, NSApplicationDelegate {
         footerStack.orientation = .horizontal
         footerStack.alignment = .centerY
 
-        let stack = NSStackView(views: [headerStack, sep1, filesLabel, sep2, footerStack])
+        let rowsContainer = NSView()
+        rowsContainer.translatesAutoresizingMaskIntoConstraints = false
+        rowsContainer.addSubview(filesStack)
+        filesStack.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            filesStack.leadingAnchor.constraint(equalTo: rowsContainer.leadingAnchor),
+            filesStack.trailingAnchor.constraint(equalTo: rowsContainer.trailingAnchor),
+            filesStack.topAnchor.constraint(equalTo: rowsContainer.topAnchor),
+            filesStack.bottomAnchor.constraint(equalTo: rowsContainer.bottomAnchor)
+        ])
+
+        let rowsScroll = NSScrollView()
+        rowsScroll.drawsBackground = false
+        rowsScroll.hasVerticalScroller = true
+        rowsScroll.autohidesScrollers = true
+        rowsScroll.documentView = rowsContainer
+        rowsScroll.contentView.postsBoundsChangedNotifications = false
+        rowsScroll.heightAnchor.constraint(equalToConstant: 150).isActive = true
+
+        let stack = NSStackView(views: [headerStack, sep1, rowsScroll, sep2, footerStack])
         stack.orientation = .vertical
         stack.spacing = 10
         stack.alignment = .leading
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
 
-        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 255))
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 290))
         contentView.wantsLayer = true
         contentView.layer?.backgroundColor = NSColor(calibratedWhite: 0.97, alpha: 1.0).cgColor
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -224,23 +244,25 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func addRecentEvent(fileName: String, status: String) {
-        recentEvents.removeAll { $0.fileName == fileName }
-        recentEvents.insert(.init(fileName: fileName, status: status, timestamp: Date()), at: 0)
+    private func addRecentEvent(fileURL: URL, status: String, summary: String? = nil) {
+        let path = fileURL.path
+        let previous = recentEvents.first { $0.fileURL.path == path }
+        recentEvents.removeAll { $0.fileURL.path == path }
+
+        let nextSummary = summary ?? previous?.summary ?? "new screenshot"
+        let nextEvent = RecentFileEvent(
+            fileURL: fileURL,
+            fileName: fileURL.lastPathComponent,
+            summary: nextSummary,
+            status: status,
+            timestamp: Date()
+        )
+
+        recentEvents.insert(nextEvent, at: 0)
         if recentEvents.count > 10 {
             recentEvents = Array(recentEvents.prefix(10))
         }
         refreshPopoverContent()
-    }
-
-    private func padded(_ text: String, to width: Int) -> String {
-        if text.count >= width { return text }
-        return text + String(repeating: " ", count: width - text.count)
-    }
-
-    private func leftPadded(_ text: String, to width: Int) -> String {
-        if text.count >= width { return text }
-        return String(repeating: " ", count: width - text.count) + text
     }
 
     private func refreshPopoverContent() {
@@ -256,30 +278,128 @@ final class AppController: NSObject, NSApplicationDelegate {
             statusTextLabel.stringValue = "error"
         }
 
+        filesStack.arrangedSubviews.forEach { view in
+            filesStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
         if recentEvents.isEmpty {
-            filesLabel.stringValue = "No recent files"
+            let emptyLabel = NSTextField(labelWithString: "No recent files")
+            emptyLabel.font = NSFont.systemFont(ofSize: 12)
+            emptyLabel.textColor = .secondaryLabelColor
+            filesStack.addArrangedSubview(emptyLabel)
             return
         }
 
-        let maxName = 22
-        let statusWidth = 10
-        let lines = recentEvents.prefix(10).map { event -> String in
-            let statusText: String
-            switch event.status {
-            case "ok": statusText = "done"
-            case "error": statusText = "error"
-            case "queued": statusText = "queued"
-            case "processing": statusText = "processing"
-            default: statusText = event.status
-            }
-
-            let ts = eventTimeFormatter.string(from: event.timestamp)
-            let name = event.fileName.count > maxName ? String(event.fileName.prefix(maxName - 1)) + "…" : event.fileName
-            let leftCol = padded("\(ts)  \(name)", to: 34)
-            let rightCol = leftPadded(statusText, to: statusWidth)
-            return leftCol + rightCol
+        recentEvents.prefix(10).forEach { event in
+            filesStack.addArrangedSubview(makeEventRow(for: event))
         }
-        filesLabel.stringValue = lines.joined(separator: "\n")
+    }
+
+    private func makeEventRow(for event: RecentFileEvent) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.wantsLayer = true
+        row.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.9).cgColor
+        row.layer?.cornerRadius = 8
+        row.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
+
+        let summaryButton = NSButton(title: "\(eventTimeFormatter.string(from: event.timestamp))  \(event.summary)", target: self, action: #selector(openEventFileInFinder(_:)))
+        summaryButton.isBordered = false
+        summaryButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        summaryButton.alignment = .left
+        summaryButton.lineBreakMode = .byTruncatingTail
+        summaryButton.setButtonType(.momentaryChange)
+        summaryButton.contentTintColor = .labelColor
+        summaryButton.toolTip = event.fileName
+        summaryButton.identifier = NSUserInterfaceItemIdentifier(event.fileURL.path)
+
+        let statusLabel = NSTextField(labelWithString: displayStatusText(event.status))
+        statusLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        statusLabel.textColor = statusColor(event.status)
+        statusLabel.alignment = .right
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        summaryButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        summaryButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        statusLabel.setContentHuggingPriority(.required, for: .horizontal)
+
+        row.addArrangedSubview(summaryButton)
+        row.addArrangedSubview(spacer)
+        row.addArrangedSubview(statusLabel)
+
+        return row
+    }
+
+    private func displayStatusText(_ status: String) -> String {
+        switch status {
+        case "ok": return "done"
+        case "error": return "error"
+        case "queued": return "queued"
+        case "processing": return "processing"
+        default: return status
+        }
+    }
+
+    private func statusColor(_ status: String) -> NSColor {
+        switch status {
+        case "ok": return .systemGreen
+        case "error": return .systemRed
+        case "queued": return .systemOrange
+        case "processing": return .systemBlue
+        default: return .secondaryLabelColor
+        }
+    }
+
+    private func makeShortSummary(from description: String) -> String {
+        let source = extractSummarySource(from: description)
+        let cleaned = source
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let words = cleaned
+            .split(whereSeparator: { $0.isWhitespace || $0 == "," || $0 == "." || $0 == ":" || $0 == ";" || $0 == "|" || $0 == "-" })
+            .map(String.init)
+            .filter { !$0.isEmpty }
+
+        if words.count >= 3 {
+            return words.prefix(3).joined(separator: " ")
+        }
+        if words.count == 2 {
+            return words.joined(separator: " ")
+        }
+        if words.count == 1 {
+            return words[0]
+        }
+        return "new screenshot"
+    }
+
+    private func extractSummarySource(from description: String) -> String {
+        guard let data = description.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return description
+        }
+
+        if let focus = json["focus"] as? String, !focus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return focus
+        }
+        if let gist = json["gist"] as? String, !gist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return gist
+        }
+        if let tags = json["tags"] as? [String], !tags.isEmpty {
+            return tags.prefix(3).joined(separator: " ")
+        }
+
+        return description
+    }
+
+    @objc private func openEventFileInFinder(_ sender: NSButton) {
+        guard let path = sender.identifier?.rawValue else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
     private func restoreFolder() {
@@ -572,7 +692,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         log("[watch] detected \(urls.count) new supported file(s) in \(folderURL.path)")
         urls.forEach {
             log("[watch] queued: \($0.path)")
-            addRecentEvent(fileName: $0.lastPathComponent, status: "queued")
+            addRecentEvent(fileURL: $0, status: "queued", summary: "new screenshot")
         }
         processingQueue.append(contentsOf: urls)
 
@@ -590,20 +710,21 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = .processing
 
         let file = processingQueue.removeFirst()
-        addRecentEvent(fileName: file.lastPathComponent, status: "processing")
+        addRecentEvent(fileURL: file, status: "processing", summary: "analyzing screenshot")
         log("[process] start: \(file.path)")
         notify(title: "Processing started", body: file.lastPathComponent)
 
         Task {
             do {
                 let description = try await describeImageWithOpenAI(fileURL: file)
+                let summary = makeShortSummary(from: description)
                 try appendCSVRow(in: folderURL, fileURL: file, description: description, status: "ok", error: "")
-                addRecentEvent(fileName: file.lastPathComponent, status: "ok")
+                addRecentEvent(fileURL: file, status: "ok", summary: summary)
                 log("[process] success: \(file.path)")
                 notify(title: "Processed", body: file.lastPathComponent)
             } catch {
                 let message = error.localizedDescription
-                addRecentEvent(fileName: file.lastPathComponent, status: "error")
+                addRecentEvent(fileURL: file, status: "error", summary: "processing failed")
                 state = .error
                 log("[process] error: \(file.path) :: \(message)")
                 try? appendCSVRow(in: folderURL, fileURL: file, description: "", status: "error", error: message)
